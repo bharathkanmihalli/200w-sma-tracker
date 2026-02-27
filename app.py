@@ -297,9 +297,3 @@ if selected_wl:
 st.markdown("---")
 st.markdown('<div style="color:#555; font-size:0.8rem; text-align:center;">Data via Twelve Data · Cached hourly in Supabase · Built with Streamlit</div>', unsafe_allow_html=True)
 ```
-
-Also update `requirements.txt` — remove `pandas-datareader` if it's still there:
-```
-streamlit
-pandas
-supabase==2.9.0
