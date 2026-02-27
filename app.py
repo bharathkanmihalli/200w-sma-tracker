@@ -83,10 +83,12 @@ def fetch_stock_data(sym):
     try:
         url = f"https://stooq.com/q/d/l/?s={sym.lower()}.us&i=w"
         resp = requests.get(url, timeout=10)
+        st.info(f"DEBUG {sym}: HTTP {resp.status_code}, first 200 chars: {resp.text[:200]}")
         df = pd.read_csv(io.StringIO(resp.text), parse_dates=["Date"], index_col="Date")
         df = df.sort_index()
         return df
-    except Exception:
+    except Exception as e:
+        st.error(f"Error fetching {sym}: {e}")
         return pd.DataFrame()
 
 def fetch_and_cache(symbols):
@@ -103,6 +105,7 @@ def fetch_and_cache(symbols):
                 df = fetch_stock_data(sym)
 
                 if df.empty or len(df) < 10:
+                    st.warning(f"{sym}: Got empty or too-short data. Columns: {list(df.columns)}")
                     continue
 
                 current_price = round(float(df["Close"].iloc[-1]), 2)
@@ -122,7 +125,8 @@ def fetch_and_cache(symbols):
                     "market_cap": None,
                     "updated_at": datetime.now(timezone.utc).isoformat()
                 })
-            except Exception:
+            except Exception as e:
+                st.error(f"Failed processing {sym}: {e}")
                 continue
 
         if new_rows:
