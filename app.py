@@ -81,67 +81,54 @@ def format_market_cap(val):
 def fetch_and_cache(symbols):
     cache = get_cached(symbols)
     stale = [s for s in symbols if not is_fresh(cache.get(s))]
-    
+
     if stale:
-        progress = st.progress(0, text="Fetching fresh data from Yahoo Finance...")
+        progress = st.progress(0, text="Fetching fresh data from Stooq...")
         try:
-            # Batch download all stale tickers in one request
             end = dt.date.today()
-start = end - dt.timedelta(weeks=260)
-raw = {}
-for sym in stale:
-    try:
-        df = pdr.DataReader(f"{sym}.US", "stooq", start, end)
-        df = df.sort_index()
-        df = df.resample("W").last()
-        raw[sym] = df
-    except:
-        raw[sym] = pd.DataFrame()
-            
+            start = end - dt.timedelta(weeks=260)
+
             new_rows = []
             for i, sym in enumerate(stale):
                 progress.progress((i + 1) / len(stale), text=f"Processing {sym}...")
                 try:
-                    data = raw.get(sym, pd.DataFrame())
-                    
-                    if data.empty or len(data) < 10:
+                    df = pdr.DataReader(f"{sym}.US", "stooq", start, end)
+                    df = df.sort_index()
+                    df = df.resample("W").last()
+
+                    if df.empty or len(df) < 10:
                         continue
-                    
-                    current_price = round(float(data["Close"].iloc[-1]), 2)
-                    
-                    if len(data) >= 200:
-                        sma_200w = round(float(data["Close"].rolling(window=200).mean().iloc[-1]), 2)
+
+                    current_price = round(float(df["Close"].iloc[-1]), 2)
+
+                    if len(df) >= 200:
+                        sma_200w = round(float(df["Close"].rolling(window=200).mean().iloc[-1]), 2)
                         distance = round(((current_price - sma_200w) / sma_200w) * 100, 2)
                     else:
                         sma_200w = None
                         distance = None
-                    
-                    # Get market cap
-                    
-                        market_cap = None
-                    
+
                     new_rows.append({
                         "symbol": sym,
                         "current_price": current_price,
                         "sma_200w": sma_200w,
                         "distance": distance,
-                        "market_cap": market_cap,
+                        "market_cap": None,
                         "updated_at": datetime.now(timezone.utc).isoformat()
                     })
                 except Exception:
                     continue
-            
+
             if new_rows:
                 save_cache(new_rows)
                 for row in new_rows:
                     cache[row["symbol"]] = row
-        
+
         except Exception as e:
             st.warning(f"Could not fetch fresh data: {e}. Showing cached data if available.")
-        
+
         progress.empty()
-    
-    # Build final results from cache
+
     results = []
     for sym in symbols:
         c = cache.get(sym)
@@ -155,7 +142,7 @@ for sym in stale:
             })
         else:
             results.append({"symbol": sym, "current_price": None, "sma_200w": None, "distance": None, "market_cap": None})
-    
+
     return results
 
 # ── Session state ─────────────────────────────────────────────────────────────
@@ -243,7 +230,6 @@ if selected_wl:
 
     with refresh_col:
         if st.button("🔄 Refresh", use_container_width=True):
-            # Clear cache for this watchlist's symbols so fresh data is fetched
             for sym in symbols:
                 supabase.table("stock_cache").delete().eq("symbol", sym).execute()
             st.rerun()
@@ -288,4 +274,4 @@ if selected_wl:
             s3.metric("Best Value (Most Below)", f"{valid['distance'].min():+.1f}%", valid.loc[valid['distance'].idxmin(), 'symbol'])
 
 st.markdown("---")
-st.markdown('<div style="color:#555; font-size:0.8rem; text-align:center;">Data via Yahoo Finance · Cached hourly in Supabase · Built with Streamlit</div>', unsafe_allow_html=True)
+st.markdown('<div style="color:#555; font-size:0.8rem; text-align:center;">Data via Stooq · Cached hourly in Supabase · Built with Streamlit</div>', unsafe_allow_html=True)
