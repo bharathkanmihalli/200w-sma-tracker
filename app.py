@@ -100,6 +100,7 @@ def load_watchlist_data(symbols):
     for i, sym in enumerate(symbols):
         d = fetch_stock_data(sym)
         progress.progress((i + 1) / len(symbols), text=f"Loading {sym}...")
+        time.sleep(0.5)
         if d:
             rows.append(d)
         else:
