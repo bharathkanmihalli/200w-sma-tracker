@@ -1,8 +1,9 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
+from pandas_datareader import data as pdr
 from supabase import create_client
 from datetime import datetime, timezone
+import datetime as dt
 
 # ── Config ──────────────────────────────────────────────────────────────────
 SUPABASE_URL = "https://bvlqbfdiqyptlhxiwksr.supabase.co"
@@ -85,16 +86,23 @@ def fetch_and_cache(symbols):
         progress = st.progress(0, text="Fetching fresh data from Yahoo Finance...")
         try:
             # Batch download all stale tickers in one request
-            raw = yf.download(stale, period="5y", interval="1wk", progress=False, auto_adjust=True, group_by="ticker")
+            end = dt.date.today()
+start = end - dt.timedelta(weeks=260)
+raw = {}
+for sym in stale:
+    try:
+        df = pdr.DataReader(f"{sym}.US", "stooq", start, end)
+        df = df.sort_index()
+        df = df.resample("W").last()
+        raw[sym] = df
+    except:
+        raw[sym] = pd.DataFrame()
             
             new_rows = []
             for i, sym in enumerate(stale):
                 progress.progress((i + 1) / len(stale), text=f"Processing {sym}...")
                 try:
-                    if len(stale) == 1:
-                        data = raw
-                    else:
-                        data = raw[sym]
+                    data = raw.get(sym, pd.DataFrame())
                     
                     if data.empty or len(data) < 10:
                         continue
@@ -109,10 +117,7 @@ def fetch_and_cache(symbols):
                         distance = None
                     
                     # Get market cap
-                    try:
-                        info = yf.Ticker(sym).fast_info
-                        market_cap = getattr(info, "market_cap", None)
-                    except:
+                    
                         market_cap = None
                     
                     new_rows.append({
