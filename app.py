@@ -60,8 +60,8 @@ def remove_ticker(watchlist_id, symbol):
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_stock_data(symbol):
     try:
+        data = yf.download(symbol, period="5y", interval="1wk", progress=False, auto_adjust=True)
         ticker = yf.Ticker(symbol)
-        data = ticker.history(period="5y", interval="1wk")
         if len(data) < 10:
             return None
         current_price = round(float(data["Close"].iloc[-1]), 2)
