@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import requests
-import io
 from supabase import create_client
 from datetime import datetime, timezone
 import datetime as dt
@@ -9,6 +8,7 @@ import datetime as dt
 # ── Config ──────────────────────────────────────────────────────────────────
 SUPABASE_URL = "https://bvlqbfdiqyptlhxiwksr.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ2bHFiZmRpcXlwdGxoeGl3a3NyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIxNzI0MjgsImV4cCI6MjA4Nzc0ODQyOH0.R35Y7GtvqtarxqK9O-Um9c3z4_J6mu8sRR--5cdiJfo"
+TWELVEDATA_KEY = "095743e363bc4d70a53d21d30752a1a5"
 CACHE_HOURS = 1
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -81,12 +81,26 @@ def format_market_cap(val):
 
 def fetch_stock_data(sym):
     try:
-        url = f"https://stooq.com/q/d/l/?s={sym.lower()}.us&i=w"
-        resp = requests.get(url, timeout=10)
-        st.info(f"DEBUG {sym}: HTTP {resp.status_code}, first 200 chars: {resp.text[:200]}")
-        df = pd.read_csv(io.StringIO(resp.text), parse_dates=["Date"], index_col="Date")
-        df = df.sort_index()
+        url = "https://api.twelvedata.com/time_series"
+        params = {
+            "symbol": sym,
+            "interval": "1week",
+            "outputsize": 5000,
+            "apikey": TWELVEDATA_KEY
+        }
+        resp = requests.get(url, params=params, timeout=15)
+        data = resp.json()
+
+        if "values" not in data:
+            st.warning(f"{sym}: Unexpected response from Twelve Data: {data.get('message', data)}")
+            return pd.DataFrame()
+
+        df = pd.DataFrame(data["values"])
+        df["datetime"] = pd.to_datetime(df["datetime"])
+        df = df.set_index("datetime").sort_index()
+        df["Close"] = df["close"].astype(float)
         return df
+
     except Exception as e:
         st.error(f"Error fetching {sym}: {e}")
         return pd.DataFrame()
@@ -96,7 +110,7 @@ def fetch_and_cache(symbols):
     stale = [s for s in symbols if not is_fresh(cache.get(s))]
 
     if stale:
-        progress = st.progress(0, text="Fetching fresh data from Stooq...")
+        progress = st.progress(0, text="Fetching fresh data from Twelve Data...")
 
         new_rows = []
         for i, sym in enumerate(stale):
@@ -105,7 +119,7 @@ def fetch_and_cache(symbols):
                 df = fetch_stock_data(sym)
 
                 if df.empty or len(df) < 10:
-                    st.warning(f"{sym}: Got empty or too-short data. Columns: {list(df.columns)}")
+                    st.warning(f"{sym}: Not enough data returned.")
                     continue
 
                 current_price = round(float(df["Close"].iloc[-1]), 2)
@@ -281,4 +295,11 @@ if selected_wl:
             s3.metric("Best Value (Most Below)", f"{valid['distance'].min():+.1f}%", valid.loc[valid['distance'].idxmin(), 'symbol'])
 
 st.markdown("---")
-st.markdown('<div style="color:#555; font-size:0.8rem; text-align:center;">Data via Stooq · Cached hourly in Supabase · Built with Streamlit</div>', unsafe_allow_html=True)
+st.markdown('<div style="color:#555; font-size:0.8rem; text-align:center;">Data via Twelve Data · Cached hourly in Supabase · Built with Streamlit</div>', unsafe_allow_html=True)
+```
+
+Also update `requirements.txt` — remove `pandas-datareader` if it's still there:
+```
+streamlit
+pandas
+supabase==2.9.0
