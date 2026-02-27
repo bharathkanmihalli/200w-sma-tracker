@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
-from pandas_datareader import data as pdr
+import requests
+import io
 from supabase import create_client
 from datetime import datetime, timezone
 import datetime as dt
@@ -78,54 +79,56 @@ def format_market_cap(val):
         return f"${val/1e6:.2f}M"
     return f"${val:,.0f}"
 
+def fetch_stock_data(sym):
+    try:
+        url = f"https://stooq.com/q/d/l/?s={sym.lower()}.us&i=w"
+        resp = requests.get(url, timeout=10)
+        df = pd.read_csv(io.StringIO(resp.text), parse_dates=["Date"], index_col="Date")
+        df = df.sort_index()
+        return df
+    except Exception:
+        return pd.DataFrame()
+
 def fetch_and_cache(symbols):
     cache = get_cached(symbols)
     stale = [s for s in symbols if not is_fresh(cache.get(s))]
 
     if stale:
         progress = st.progress(0, text="Fetching fresh data from Stooq...")
-        try:
-            end = dt.date.today()
-            start = end - dt.timedelta(weeks=260)
 
-            new_rows = []
-            for i, sym in enumerate(stale):
-                progress.progress((i + 1) / len(stale), text=f"Processing {sym}...")
-                try:
-                    df = pdr.DataReader(f"{sym}.US", "stooq", start, end)
-                    df = df.sort_index()
-                    df = df.resample("W").last()
+        new_rows = []
+        for i, sym in enumerate(stale):
+            progress.progress((i + 1) / len(stale), text=f"Processing {sym}...")
+            try:
+                df = fetch_stock_data(sym)
 
-                    if df.empty or len(df) < 10:
-                        continue
-
-                    current_price = round(float(df["Close"].iloc[-1]), 2)
-
-                    if len(df) >= 200:
-                        sma_200w = round(float(df["Close"].rolling(window=200).mean().iloc[-1]), 2)
-                        distance = round(((current_price - sma_200w) / sma_200w) * 100, 2)
-                    else:
-                        sma_200w = None
-                        distance = None
-
-                    new_rows.append({
-                        "symbol": sym,
-                        "current_price": current_price,
-                        "sma_200w": sma_200w,
-                        "distance": distance,
-                        "market_cap": None,
-                        "updated_at": datetime.now(timezone.utc).isoformat()
-                    })
-                except Exception:
+                if df.empty or len(df) < 10:
                     continue
 
-            if new_rows:
-                save_cache(new_rows)
-                for row in new_rows:
-                    cache[row["symbol"]] = row
+                current_price = round(float(df["Close"].iloc[-1]), 2)
 
-        except Exception as e:
-            st.warning(f"Could not fetch fresh data: {e}. Showing cached data if available.")
+                if len(df) >= 200:
+                    sma_200w = round(float(df["Close"].rolling(window=200).mean().iloc[-1]), 2)
+                    distance = round(((current_price - sma_200w) / sma_200w) * 100, 2)
+                else:
+                    sma_200w = None
+                    distance = None
+
+                new_rows.append({
+                    "symbol": sym,
+                    "current_price": current_price,
+                    "sma_200w": sma_200w,
+                    "distance": distance,
+                    "market_cap": None,
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                })
+            except Exception:
+                continue
+
+        if new_rows:
+            save_cache(new_rows)
+            for row in new_rows:
+                cache[row["symbol"]] = row
 
         progress.empty()
 
