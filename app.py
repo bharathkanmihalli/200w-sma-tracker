@@ -119,4 +119,168 @@ def fetch_and_cache(symbols):
                         "symbol": sym,
                         "current_price": current_price,
                         "sma_200w": sma_200w,
-                        "distance":
+                        "distance": distance,
+                        "market_cap": market_cap,
+                        "updated_at": datetime.now(timezone.utc).isoformat()
+                    })
+                except Exception:
+                    continue
+            
+            if new_rows:
+                save_cache(new_rows)
+                for row in new_rows:
+                    cache[row["symbol"]] = row
+        
+        except Exception as e:
+            st.warning(f"Could not fetch fresh data: {e}. Showing cached data if available.")
+        
+        progress.empty()
+    
+    # Build final results from cache
+    results = []
+    for sym in symbols:
+        c = cache.get(sym)
+        if c:
+            results.append({
+                "symbol": sym,
+                "current_price": c.get("current_price"),
+                "sma_200w": c.get("sma_200w"),
+                "distance": c.get("distance"),
+                "market_cap": c.get("market_cap"),
+            })
+        else:
+            results.append({"symbol": sym, "current_price": None, "sma_200w": None, "distance": None, "market_cap": None})
+    
+    return results
+
+# ── Session state ─────────────────────────────────────────────────────────────
+if "selected_watchlist_id" not in st.session_state:
+    st.session_state.selected_watchlist_id = None
+if "show_rename" not in st.session_state:
+    st.session_state.show_rename = False
+if "show_add_watchlist" not in st.session_state:
+    st.session_state.show_add_watchlist = False
+
+# ── Main UI ───────────────────────────────────────────────────────────────────
+st.markdown('<div class="main-title">📈 200W SMA Tracker</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">Track how far your stocks are from their 200-Week Simple Moving Average</div>', unsafe_allow_html=True)
+
+watchlists = get_watchlists()
+watchlist_names = [w["name"] for w in watchlists] if watchlists else []
+
+col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+
+with col1:
+    if watchlist_names:
+        if st.session_state.selected_watchlist_id:
+            ids = [w["id"] for w in watchlists]
+            default_idx = ids.index(st.session_state.selected_watchlist_id) if st.session_state.selected_watchlist_id in ids else 0
+        else:
+            default_idx = 0
+        selected_name = st.selectbox("Watchlist", watchlist_names, index=default_idx, label_visibility="collapsed")
+        selected_wl = next(w for w in watchlists if w["name"] == selected_name)
+        st.session_state.selected_watchlist_id = selected_wl["id"]
+    else:
+        selected_wl = None
+        st.info("Create a watchlist to get started.")
+
+with col2:
+    if st.button("➕ New Watchlist", use_container_width=True):
+        st.session_state.show_add_watchlist = not st.session_state.show_add_watchlist
+
+with col3:
+    if selected_wl and st.button("✏️ Rename", use_container_width=True):
+        st.session_state.show_rename = not st.session_state.show_rename
+
+with col4:
+    if selected_wl and st.button("🗑️ Delete Watchlist", use_container_width=True):
+        delete_watchlist(selected_wl["id"])
+        st.session_state.selected_watchlist_id = None
+        st.rerun()
+
+if st.session_state.show_add_watchlist:
+    with st.container(border=True):
+        new_name = st.text_input("New watchlist name", placeholder="e.g. Nuclear Stocks")
+        if st.button("Create", key="create_wl"):
+            if new_name.strip():
+                add_watchlist(new_name.strip())
+                st.session_state.show_add_watchlist = False
+                st.rerun()
+
+if st.session_state.show_rename and selected_wl:
+    with st.container(border=True):
+        new_name = st.text_input("New name", value=selected_wl["name"])
+        if st.button("Save name", key="save_rename"):
+            if new_name.strip():
+                rename_watchlist(selected_wl["id"], new_name.strip())
+                st.session_state.show_rename = False
+                st.rerun()
+
+st.divider()
+
+if selected_wl:
+    symbols = get_tickers(selected_wl["id"])
+
+    add_col, sort_col, refresh_col = st.columns([3, 2, 1])
+
+    with add_col:
+        new_ticker = st.text_input("Add ticker", placeholder="e.g. AAPL", label_visibility="collapsed")
+        if st.button("Add Stock"):
+            if new_ticker.strip():
+                added = add_ticker(selected_wl["id"], new_ticker.strip().upper())
+                if added:
+                    st.rerun()
+                else:
+                    st.warning(f"{new_ticker.upper()} is already in this watchlist.")
+
+    with sort_col:
+        sort_by = st.selectbox("Sort by", ["Distance from 200W SMA", "Current Price", "Market Cap"], label_visibility="collapsed")
+
+    with refresh_col:
+        if st.button("🔄 Refresh", use_container_width=True):
+            # Clear cache for this watchlist's symbols so fresh data is fetched
+            for sym in symbols:
+                supabase.table("stock_cache").delete().eq("symbol", sym).execute()
+            st.rerun()
+
+    if not symbols:
+        st.info("No stocks in this watchlist yet. Add some tickers above!")
+    else:
+        rows = fetch_and_cache(symbols)
+        df = pd.DataFrame(rows)
+
+        sort_map = {"Distance from 200W SMA": "distance", "Current Price": "current_price", "Market Cap": "market_cap"}
+        df = df.sort_values(by=sort_map[sort_by], ascending=True, na_position="last")
+
+        st.markdown("### Holdings")
+        header_cols = st.columns([1, 1.5, 1.5, 1.5, 1.5, 0.8])
+        for col, label in zip(header_cols, ["Ticker", "Price", "200W SMA", "Distance", "Market Cap", "Remove"]):
+            col.markdown(f"**{label}**")
+        st.divider()
+
+        for _, row in df.iterrows():
+            r = st.columns([1, 1.5, 1.5, 1.5, 1.5, 0.8])
+            r[0].markdown(f"**{row['symbol']}**")
+            r[1].write(f"${row['current_price']:,.2f}" if row["current_price"] else "N/A")
+            r[2].write(f"${row['sma_200w']:,.2f}" if row["sma_200w"] else "N/A")
+            if row["distance"] is not None:
+                color = "metric-above" if row["distance"] >= 0 else "metric-below"
+                icon = "🟢" if row["distance"] >= 0 else "🔴"
+                r[3].markdown(f'<span class="{color}">{icon} {row["distance"]:+.2f}%</span>', unsafe_allow_html=True)
+            else:
+                r[3].write("N/A")
+            r[4].write(format_market_cap(row["market_cap"]))
+            if r[5].button("✕", key=f"del_{row['symbol']}"):
+                remove_ticker(selected_wl["id"], row["symbol"])
+                st.rerun()
+
+        st.divider()
+        valid = df.dropna(subset=["distance"])
+        if not valid.empty:
+            s1, s2, s3 = st.columns(3)
+            s1.metric("Stocks Above 200W SMA", f"{(valid['distance'] >= 0).sum()} / {len(valid)}")
+            s2.metric("Most Stretched Above", f"{valid['distance'].max():+.1f}%", valid.loc[valid['distance'].idxmax(), 'symbol'])
+            s3.metric("Best Value (Most Below)", f"{valid['distance'].min():+.1f}%", valid.loc[valid['distance'].idxmin(), 'symbol'])
+
+st.markdown("---")
+st.markdown('<div style="color:#555; font-size:0.8rem; text-align:center;">Data via Yahoo Finance · Cached hourly in Supabase · Built with Streamlit</div>', unsafe_allow_html=True)
